@@ -77,7 +77,7 @@ export async function flipCard(
     return { status: "error", message: "Invalid card index" };
   }
 
-  // Cleanup stale flips
+  // Cleanup stale flips (older than 5s)
   await cleanupStaleFlips(supabase);
 
   // Check card is available
@@ -90,6 +90,25 @@ export async function flipCard(
   if (!card) return { status: "error", message: "Card not found" };
   if (card.is_matched) return { status: "error", message: "Card already matched" };
   if (card.owner_id) return { status: "error", message: "Card already flipped" };
+
+  // Check how many unmatched cards this user already has flipped
+  const { data: existingFlips } = await supabase
+    .from("board_cards")
+    .select("*")
+    .eq("owner_id", userId)
+    .eq("is_matched", false);
+
+  const myFlippedCards = existingFlips ?? [];
+
+  // If user already has 2+ unmatched cards, flip them ALL back first
+  if (myFlippedCards.length >= 2) {
+    const indices = myFlippedCards.map((c) => c.index);
+    await supabase
+      .from("board_cards")
+      .update({ owner_id: null, owner_name: null, pokemon: null, flipped_at: null })
+      .in("index", indices)
+      .eq("is_matched", false);
+  }
 
   // Get secret pokemon mapping
   const { data: state } = await supabase
@@ -118,7 +137,7 @@ export async function flipCard(
 
   if (claimError) return { status: "error", message: "Failed to claim card" };
 
-  // Find other unmatched cards flipped by this user
+  // Re-check: how many unmatched cards does this user now have? (should be 1 or 2)
   const { data: myCards } = await supabase
     .from("board_cards")
     .select("*")
@@ -127,10 +146,12 @@ export async function flipCard(
 
   const otherCards = (myCards ?? []).filter((c) => c.index !== index);
 
+  // Only 1 card flipped (the one we just claimed) — wait for 2nd
   if (otherCards.length === 0) {
     return { status: "waiting", pokemon };
   }
 
+  // 2 cards flipped — check for match
   if (otherCards.length === 1) {
     const otherCard = otherCards[0];
     const otherPokemon: PokemonInfo | null = otherCard.pokemon;
@@ -147,33 +168,27 @@ export async function flipCard(
       await addToCollection(supabase, userId, pokemon);
 
       // Update match player score
-      await supabase.from("match_players").upsert(
-        {
-          owner_id: userId,
-          count: 1,
-          last_pokemon_name: pokemon.nameEn,
-          matched_at: now,
-        },
-        { onConflict: "owner_id" }
-      );
-
-      // Increment count for existing players
       const { data: player } = await supabase
         .from("match_players")
         .select("count")
         .eq("owner_id", userId)
         .single();
 
-      if (player && player.count === 1) {
-        // Was just created by upsert, count is already 1
-      } else if (player) {
+      if (player) {
         await supabase
           .from("match_players")
           .update({ count: player.count + 1, last_pokemon_name: pokemon.nameEn, matched_at: now })
           .eq("owner_id", userId);
+      } else {
+        await supabase.from("match_players").insert({
+          owner_id: userId,
+          count: 1,
+          last_pokemon_name: pokemon.nameEn,
+          matched_at: now,
+        });
       }
 
-      // Check if all cards matched
+      // Check if all cards matched → reset board
       const { count } = await supabase
         .from("board_cards")
         .select("*", { count: "exact", head: true })
@@ -185,19 +200,12 @@ export async function flipCard(
 
       return { status: "matched", pokemon, matchedPokemon: pokemon };
     } else {
-      // No match — cards stay flipped, will timeout via cleanupStaleFlips
+      // No match — both cards stay visible for 5s, then auto-clear
       return { status: "no_match", pokemon };
     }
   }
 
-  // 2+ other cards: flip them all back immediately
-  const cardIndices = otherCards.map((c) => c.index);
-  await supabase
-    .from("board_cards")
-    .update({ owner_id: null, owner_name: null, pokemon: null, flipped_at: null })
-    .in("index", cardIndices)
-    .eq("is_matched", false);
-
+  // Shouldn't happen (we cleared extras above), but just in case
   return { status: "waiting", pokemon };
 }
 
