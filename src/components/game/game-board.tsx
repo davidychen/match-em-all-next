@@ -6,13 +6,12 @@ import { TOTAL_CARDS } from "@/lib/game/constants";
 import { GameCard } from "./game-card";
 import type { BoardCard, PokemonInfo } from "@/lib/game/types";
 
-// Store flipped pokemon in a separate ref to avoid state conflicts
 type FlippedCard = {
   pokemon: PokemonInfo;
   ownerId: string;
   ownerName: string;
   isMatched: boolean;
-  flippedAt: number; // timestamp ms
+  flippedAt: number;
 };
 
 export function GameBoard() {
@@ -20,6 +19,8 @@ export function GameBoard() {
   const [flipped, setFlipped] = useState<Record<number, FlippedCard>>({});
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
+  const flippingRef = useRef(false);
+  const flipQueueRef = useRef<number[]>([]);
 
   useEffect(() => {
     fetch("/api/game/state")
@@ -31,8 +32,10 @@ export function GameBoard() {
       .catch(() => setLoading(false));
   }, []);
 
-  const handleFlip = useCallback(
+  const processFlip = useCallback(
     async (index: number) => {
+      if (!user) return;
+
       const res = await fetch("/api/game/flip", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -40,7 +43,7 @@ export function GameBoard() {
       });
       const data = await res.json();
 
-      if (data.pokemon && user) {
+      if (data.pokemon) {
         setFlipped((prev) => ({
           ...prev,
           [index]: {
@@ -54,6 +57,48 @@ export function GameBoard() {
       }
     },
     [user]
+  );
+
+  const processQueue = useCallback(async () => {
+    if (flippingRef.current) return;
+    flippingRef.current = true;
+
+    while (flipQueueRef.current.length > 0) {
+      const index = flipQueueRef.current.shift()!;
+      await processFlip(index);
+    }
+
+    flippingRef.current = false;
+  }, [processFlip]);
+
+  const handleFlip = useCallback(
+    (index: number) => {
+      if (!user) return;
+
+      // Count how many unmatched cards this user currently has showing
+      const myUnmatched = Object.values(flipped).filter(
+        (f) => f.ownerId === user.id && !f.isMatched
+      );
+
+      // If 2+ unmatched cards showing, clear them first (optimistic)
+      if (myUnmatched.length >= 2) {
+        setFlipped((prev) => {
+          const next: Record<number, FlippedCard> = {};
+          for (const [key, val] of Object.entries(prev)) {
+            // Keep matched cards, remove unmatched ones owned by this user
+            if (val.isMatched || val.ownerId !== user.id) {
+              next[Number(key)] = val;
+            }
+          }
+          return next;
+        });
+      }
+
+      // Queue the flip request
+      flipQueueRef.current.push(index);
+      processQueue();
+    },
+    [user, flipped, processQueue]
   );
 
   // Auto-flip-back: remove entries older than 5 seconds (unless matched)
