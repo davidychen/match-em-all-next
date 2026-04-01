@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createServerClient } from "@/lib/supabase/server";
+import { cleanupStaleFlips } from "@/lib/game/logic";
 
 export async function GET() {
   const supabase = await createServerClient();
@@ -9,7 +11,11 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data: cards } = await supabase
+  // Clean up stale flips before returning state
+  const admin = createAdminClient();
+  await cleanupStaleFlips(admin);
+
+  const { data: cards } = await admin
     .from("board_cards")
     .select("*")
     .order("index");

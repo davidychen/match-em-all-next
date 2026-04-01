@@ -2,36 +2,63 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { TOTAL_CARDS } from "@/lib/game/constants";
+import { TOTAL_CARDS, FLIP_TIMEOUT_MS } from "@/lib/game/constants";
 import { GameCard } from "./game-card";
 import type { BoardCard, PokemonInfo } from "@/lib/game/types";
 
-type FlippedCard = {
-  pokemon: PokemonInfo;
-  ownerId: string;
-  ownerName: string;
-  isMatched: boolean;
-  flippedAt: number;
-};
+/** Clean a card array: hide stale flips (>5s old, not matched) */
+function cleanStaleCards(cards: BoardCard[]): BoardCard[] {
+  const now = Date.now();
+  return cards.map((card) => {
+    if (
+      card.pokemon &&
+      !card.is_matched &&
+      card.flipped_at &&
+      now - new Date(card.flipped_at).getTime() > FLIP_TIMEOUT_MS
+    ) {
+      return { ...card, pokemon: null, owner_id: null, owner_name: null, flipped_at: null };
+    }
+    return card;
+  });
+}
 
 export function GameBoard() {
   const [cards, setCards] = useState<BoardCard[]>([]);
-  const [flipped, setFlipped] = useState<Record<number, FlippedCard>>({});
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
   const flippingRef = useRef(false);
   const flipQueueRef = useRef<number[]>([]);
 
-  useEffect(() => {
-    fetch("/api/game/state")
-      .then((r) => r.json())
-      .then(({ cards: data }) => {
-        setCards(data ?? []);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+  // Fetch board state from server
+  const fetchBoard = useCallback(async () => {
+    try {
+      const res = await fetch("/api/game/state");
+      const { cards: data } = await res.json();
+      if (data) {
+        setCards(cleanStaleCards(data));
+      }
+    } catch {
+      // ignore fetch errors
+    }
+    setLoading(false);
   }, []);
 
+  // Initial load + poll every 2s for multiplayer sync
+  useEffect(() => {
+    fetchBoard();
+    const interval = setInterval(fetchBoard, 2000);
+    return () => clearInterval(interval);
+  }, [fetchBoard]);
+
+  // Client-side stale cleanup every second (between polls)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCards((prev) => cleanStaleCards(prev));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Process a single flip request
   const processFlip = useCallback(
     async (index: number) => {
       if (!user) return;
@@ -44,30 +71,41 @@ export function GameBoard() {
       const data = await res.json();
 
       if (data.pokemon) {
-        setFlipped((prev) => ({
-          ...prev,
-          [index]: {
-            pokemon: data.pokemon,
-            ownerId: user.id,
-            ownerName: user.user_metadata?.username ?? "Player",
-            isMatched: data.status === "matched",
-            flippedAt: Date.now(),
-          },
-        }));
+        // Optimistically update this card in state
+        setCards((prev) =>
+          prev.map((c) =>
+            c.index === index
+              ? {
+                  ...c,
+                  pokemon: data.pokemon,
+                  owner_id: user.id,
+                  owner_name: user.user_metadata?.username ?? "Player",
+                  is_matched: data.status === "matched",
+                  flipped_at: new Date().toISOString(),
+                  matched_at: data.status === "matched" ? new Date().toISOString() : null,
+                }
+              : c
+          )
+        );
+
+        // If matched, also mark the other card as matched
+        if (data.status === "matched") {
+          // Refetch to get the full matched state from server
+          setTimeout(fetchBoard, 500);
+        }
       }
     },
-    [user]
+    [user, fetchBoard]
   );
 
+  // Process queued flips one at a time
   const processQueue = useCallback(async () => {
     if (flippingRef.current) return;
     flippingRef.current = true;
-
     while (flipQueueRef.current.length > 0) {
       const index = flipQueueRef.current.shift()!;
       await processFlip(index);
     }
-
     flippingRef.current = false;
   }, [processFlip]);
 
@@ -75,50 +113,30 @@ export function GameBoard() {
     (index: number) => {
       if (!user) return;
 
-      // Count how many unmatched cards this user currently has showing
-      const myUnmatched = Object.values(flipped).filter(
-        (f) => f.ownerId === user.id && !f.isMatched
+      // Count unmatched cards currently showing for this user
+      const myUnmatched = cards.filter(
+        (c) => c.owner_id === user.id && !c.is_matched && c.pokemon
       );
 
-      // If 2+ unmatched cards showing, clear them first (optimistic)
+      // If 2+ showing, clear them optimistically before the new flip
       if (myUnmatched.length >= 2) {
-        setFlipped((prev) => {
-          const next: Record<number, FlippedCard> = {};
-          for (const [key, val] of Object.entries(prev)) {
-            // Keep matched cards, remove unmatched ones owned by this user
-            if (val.isMatched || val.ownerId !== user.id) {
-              next[Number(key)] = val;
+        setCards((prev) =>
+          prev.map((c) => {
+            if (c.owner_id === user.id && !c.is_matched && c.pokemon) {
+              return { ...c, pokemon: null, owner_id: null, owner_name: null, flipped_at: null };
             }
-          }
-          return next;
-        });
+            return c;
+          })
+        );
       }
 
-      // Queue the flip request
       flipQueueRef.current.push(index);
       processQueue();
     },
-    [user, flipped, processQueue]
+    [user, cards, processQueue]
   );
 
-  // Auto-flip-back: remove entries older than 5 seconds (unless matched)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setFlipped((prev) => {
-        const now = Date.now();
-        const next: Record<number, FlippedCard> = {};
-        for (const [key, val] of Object.entries(prev)) {
-          if (val.isMatched || now - val.flippedAt < 5000) {
-            next[Number(key)] = val;
-          }
-        }
-        return next;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  if (loading || cards.length === 0) {
+  if (loading) {
     return (
       <div className="grid grid-cols-6 gap-1.5 sm:gap-2 w-full max-w-[500px] mx-auto">
         {Array.from({ length: TOTAL_CARDS }).map((_, i) => (
@@ -131,25 +149,23 @@ export function GameBoard() {
     );
   }
 
-  // Merge base cards with flipped overlay
-  const mergedCards: BoardCard[] = cards.map((card) => {
-    const f = flipped[card.index];
-    if (f) {
-      return {
-        ...card,
-        pokemon: f.pokemon,
-        owner_id: f.ownerId,
-        owner_name: f.ownerName,
-        is_matched: f.isMatched,
-        flipped_at: new Date(f.flippedAt).toISOString(),
-      };
-    }
-    return card;
-  });
+  if (cards.length === 0) {
+    return (
+      <div className="text-center py-12 text-muted-foreground">
+        <p>No game board found.</p>
+        <button
+          className="mt-2 text-purple-600 underline"
+          onClick={() => fetch("/api/game/init", { method: "POST" }).then(fetchBoard)}
+        >
+          Initialize a new game
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-6 gap-1.5 sm:gap-2 w-full max-w-[500px] mx-auto">
-      {mergedCards.map((card) => (
+      {cards.map((card) => (
         <GameCard
           key={card.index}
           index={card.index}
