@@ -13,7 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { getSpriteUrl } from "@/lib/game/constants";
+import { getAnimatedSpriteUrl, getBackSpriteUrl } from "@/lib/game/constants";
 import type { CollectionItem } from "@/lib/game/types";
 
 const typeColors: Record<string, string> = {
@@ -24,7 +24,7 @@ const typeColors: Record<string, string> = {
   grass: "bg-green-500",
   ice: "bg-cyan-300",
   fighting: "bg-red-700",
-  poison: "bg-purple-500",
+  poison: "bg-white/[0.07]0",
   ground: "bg-amber-600",
   flying: "bg-indigo-300",
   psychic: "bg-pink-500",
@@ -52,6 +52,7 @@ export function PokemonDetailDialog({
   const [evolvedPokemon, setEvolvedPokemon] =
     useState<CollectionItem | null>(null);
   const [showEvolution, setShowEvolution] = useState(false);
+  const [showBack, setShowBack] = useState(false);
 
   if (!pokemon) return null;
 
@@ -91,6 +92,7 @@ export function PokemonDetailDialog({
   function handleClose() {
     setShowEvolution(false);
     setEvolvedPokemon(null);
+    setShowBack(false);
     onClose();
   }
 
@@ -99,7 +101,7 @@ export function PokemonDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-sm bg-[#110225]/95 backdrop-blur-xl border-white/10">
         <DialogHeader>
           <DialogTitle className="text-xl capitalize text-center">
             {displayPokemon.name}
@@ -110,23 +112,50 @@ export function PokemonDetailDialog({
         </DialogHeader>
 
         <div className="flex flex-col items-center gap-4">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={displayPokemon.pokemon_id}
-              initial={{ rotateY: 90, opacity: 0 }}
-              animate={{ rotateY: 0, opacity: 1 }}
-              exit={{ rotateY: -90, opacity: 0 }}
-              transition={{ duration: 0.4 }}
-              className="w-32 h-32 bg-purple-50 rounded-2xl flex items-center justify-center"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={getSpriteUrl(displayPokemon.pokemon_id)}
-                alt={displayPokemon.name}
-                className="w-28 h-28 object-contain"
-              />
-            </motion.div>
-          </AnimatePresence>
+          <div
+            className="relative w-32 h-32 cursor-pointer"
+            style={{ perspective: "600px" }}
+            onClick={() => setShowBack((b) => !b)}
+            title="Click to flip"
+          >
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={displayPokemon.pokemon_id}
+                initial={{ rotateY: 90, opacity: 0 }}
+                animate={{ rotateY: showBack ? 180 : 0, opacity: 1 }}
+                exit={{ rotateY: -90, opacity: 0 }}
+                transition={{ duration: 0.4 }}
+                className="absolute inset-0"
+                style={{ transformStyle: "preserve-3d" }}
+              >
+                {/* Front — Official Artwork */}
+                <div
+                  className="absolute inset-0 bg-white/[0.07] rounded-2xl flex items-center justify-center"
+                  style={{ backfaceVisibility: "hidden" }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={getAnimatedSpriteUrl(displayPokemon.pokemon_id)}
+                    alt={displayPokemon.name}
+                    className="w-28 h-28 object-contain"
+                  />
+                </div>
+                {/* Back — Back Sprite */}
+                <div
+                  className="absolute inset-0 bg-white/[0.07] rounded-2xl flex items-center justify-center"
+                  style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={getBackSpriteUrl(displayPokemon.pokemon_id)}
+                    alt={`${displayPokemon.name} back`}
+                    className="w-24 h-24 object-contain [image-rendering:pixelated]"
+                  />
+                </div>
+              </motion.div>
+            </AnimatePresence>
+          </div>
+          <p className="text-[10px] text-muted-foreground -mt-2">Click sprite to flip</p>
 
           <div className="flex gap-1.5">
             {displayPokemon.type.map((t) => (
@@ -175,7 +204,7 @@ export function PokemonDetailDialog({
               <Button
                 onClick={handleEvolve}
                 disabled={evolving}
-                className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white"
+                className="w-full bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-600 text-purple-950 font-bold shadow-lg shadow-yellow-500/25"
               >
                 <Sparkles className="w-4 h-4 mr-2" />
                 {evolving

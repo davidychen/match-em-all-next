@@ -1,9 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { Star } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getSpriteUrl } from "@/lib/game/constants";
+import { getAnimatedSpriteUrl, getSpriteUrl } from "@/lib/game/constants";
 import type { BoardCard } from "@/lib/game/types";
 
 interface GameCardProps {
@@ -41,13 +42,19 @@ export function GameCard({ index, card, onFlip, currentUserId }: GameCardProps) 
   const isMatched = card?.is_matched === true;
   const isOwnedByMe = card?.owner_id === currentUserId;
   const canClick = !isRevealed && !isMatched;
+  const [gifFailed, setGifFailed] = useState(false);
 
   const handleClick = () => {
     if (!canClick) return;
     onFlip(index);
   };
 
-  const spriteUrl = card?.pokemon ? getSpriteUrl(card.pokemon.pokemonId) : "";
+  const pokemonId = card?.pokemon?.pokemonId;
+  const spriteUrl = pokemonId
+    ? gifFailed
+      ? getSpriteUrl(pokemonId)
+      : getAnimatedSpriteUrl(pokemonId)
+    : "";
 
   return (
     <div
@@ -100,11 +107,11 @@ export function GameCard({ index, card, onFlip, currentUserId }: GameCardProps) 
         <div
           className={cn(
             "absolute inset-0 rounded-xl shadow-md flex items-center justify-center p-1.5",
-            "bg-white border-2",
-            isMatched && isOwnedByMe && "border-green-400 shadow-green-400/40 shadow-lg",
-            isMatched && !isOwnedByMe && "border-gray-300 shadow-gray-300/30 shadow-md",
-            !isMatched && isOwnedByMe && "border-purple-500 shadow-purple-300/30 shadow-md",
-            !isMatched && !isOwnedByMe && "border-amber-400 shadow-amber-200/30 shadow-md"
+            "bg-[#1a0a2e] border-2",
+            isMatched && isOwnedByMe && "border-green-400 shadow-green-400/50 shadow-lg",
+            isMatched && !isOwnedByMe && "border-gray-500/50 shadow-gray-500/20 shadow-md",
+            !isMatched && isOwnedByMe && "border-purple-500 shadow-purple-400/30 shadow-md",
+            !isMatched && !isOwnedByMe && "border-amber-400 shadow-amber-300/30 shadow-md"
           )}
           style={{
             backfaceVisibility: "hidden",
@@ -121,7 +128,10 @@ export function GameCard({ index, card, onFlip, currentUserId }: GameCardProps) 
                   "w-full h-full object-contain drop-shadow-sm",
                   isMatched && !isOwnedByMe && "opacity-60 grayscale-[30%]"
                 )}
-                style={{ imageRendering: "pixelated" }}
+                style={gifFailed ? { imageRendering: "pixelated" } : undefined}
+                onError={() => {
+                  if (!gifFailed) setGifFailed(true);
+                }}
                 draggable={false}
               />
               {card.pokemon.isLegendary && (

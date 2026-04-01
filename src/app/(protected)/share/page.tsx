@@ -23,9 +23,9 @@ import { Copy } from "lucide-react";
 
 const SHARE_URL =
   typeof window !== "undefined" ? window.location.origin : "https://gottamatch.emall";
-const SHARE_TITLE = "Gotta Match 'Em All - A multiplayer Pokemon card matching game!";
+const SHARE_TITLE = "Match 'Em All - A multiplayer Pokemon card matching game!";
 const SHARE_MESSAGE =
-  "Come play Gotta Match 'Em All! Flip cards, match Pokemon, and build your collection.";
+  "Come play Match 'Em All! Flip cards, match Pokemon, and build your collection.";
 
 export default function SharePage() {
   function copyToClipboard() {
@@ -35,7 +35,7 @@ export default function SharePage() {
 
   return (
     <div className="max-w-md mx-auto flex flex-col gap-6">
-      <h1 className="text-2xl font-bold text-purple-700">Share the Game!</h1>
+      <h1 className="text-2xl font-bold text-white">Share the Game!</h1>
 
       <Card>
         <CardHeader>

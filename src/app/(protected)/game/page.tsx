@@ -20,44 +20,48 @@ export default function GamePage() {
   return (
     <div className="flex flex-col gap-4 max-w-2xl mx-auto">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-purple-700">Game Board</h1>
+        <h1 className="text-2xl font-bold text-white">Game Board</h1>
         <Dialog open={rulesOpen} onOpenChange={setRulesOpen}>
           <DialogTrigger>
-            <Button variant="outline" size="sm" className="gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 bg-white/[0.07] border-white/10 text-purple-200 hover:bg-white/[0.12] hover:text-white"
+            >
               <HelpCircle className="w-4 h-4" />
               How to Play
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-md bg-[#110225]/95 backdrop-blur-xl border-white/10">
             <DialogHeader>
-              <DialogTitle>How to Play</DialogTitle>
+              <DialogTitle className="text-white">How to Play</DialogTitle>
             </DialogHeader>
-            <div className="flex flex-col gap-3 text-sm text-muted-foreground">
+            <div className="flex flex-col gap-3 text-sm text-purple-200">
               <p>
-                <strong className="text-foreground">1. Flip cards:</strong> Click
+                <strong className="text-white">1. Flip cards:</strong> Click
                 any face-down card to reveal the Pokemon hidden underneath.
               </p>
               <p>
-                <strong className="text-foreground">2. Find matches:</strong>{" "}
+                <strong className="text-white">2. Find matches:</strong>{" "}
                 When two flipped cards show the same Pokemon, you&apos;ve made a
                 match! The Pokemon is added to your collection.
               </p>
               <p>
-                <strong className="text-foreground">3. Be quick:</strong> Flipped
+                <strong className="text-white">3. Be quick:</strong> Flipped
                 cards stay face-up for only 5 seconds before turning back over.
               </p>
               <p>
-                <strong className="text-foreground">4. Multiplayer:</strong>{" "}
+                <strong className="text-white">4. Multiplayer:</strong>{" "}
                 Other players are flipping cards at the same time. You can see
                 their flips in real-time.
               </p>
               <p>
-                <strong className="text-foreground">5. Collect & evolve:</strong>{" "}
+                <strong className="text-white">5. Collect & evolve:</strong>{" "}
                 Build your collection in the Collection page. Collect 3 of the
                 same Pokemon to evolve it!
               </p>
               <p>
-                <strong className="text-foreground">6. Legendary Pokemon:</strong>{" "}
+                <strong className="text-white">6. Legendary Pokemon:</strong>{" "}
                 Cards with a star icon are rare legendary Pokemon. They&apos;re
                 harder to find!
               </p>

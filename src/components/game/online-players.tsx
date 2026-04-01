@@ -2,7 +2,7 @@
 
 import { useOnlinePlayers } from "@/hooks/use-online-players";
 import { useAuth } from "@/hooks/use-auth";
-import { getSpriteUrl } from "@/lib/game/constants";
+import { getAnimatedSpriteUrl } from "@/lib/game/constants";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 
@@ -16,14 +16,14 @@ export function OnlinePlayers() {
 
   return (
     <div className="flex items-center gap-3">
-      <span className="text-sm text-muted-foreground font-medium">
+      <span className="text-sm text-purple-300 font-medium">
         Online ({count})
       </span>
       <div className="flex items-center -space-x-2">
         {players.map((player) => {
           const isCurrentUser = player.user_id === user?.id;
           const spriteUrl = player.avatar_id
-            ? getSpriteUrl(player.avatar_id)
+            ? getAnimatedSpriteUrl(player.avatar_id)
             : null;
 
           return (
@@ -33,20 +33,24 @@ export function OnlinePlayers() {
             >
               <Avatar
                 className={cn(
-                  "w-8 h-8 border-2",
+                  "w-8 h-8 border-2 bg-purple-900/50 overflow-hidden",
                   isCurrentUser
-                    ? "border-purple-500 ring-2 ring-purple-300"
-                    : "border-white"
+                    ? "border-purple-400 ring-2 ring-purple-400/30"
+                    : "border-white/20"
                 )}
               >
                 {spriteUrl && (
-                  <AvatarImage src={spriteUrl} alt={player.username} />
+                  <AvatarImage
+                    src={spriteUrl}
+                    alt={player.username}
+                    className="scale-[1.3] object-contain"
+                  />
                 )}
-                <AvatarFallback className="bg-purple-200 text-purple-700 text-xs font-bold">
+                <AvatarFallback className="bg-purple-900/50 text-purple-300 text-xs font-bold">
                   {player.username.slice(0, 2).toUpperCase()}
                 </AvatarFallback>
               </Avatar>
-              <span className="text-[10px] text-muted-foreground truncate max-w-[4rem]">
+              <span className="text-[10px] text-purple-300 truncate max-w-[4rem]">
                 {isCurrentUser ? "You" : player.username}
               </span>
             </div>

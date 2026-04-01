@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { TOTAL_CARDS, FLIP_TIMEOUT_MS } from "@/lib/game/constants";
 import { GameCard } from "./game-card";
+import { RoundComplete } from "./round-complete";
 import type { BoardCard, PokemonInfo } from "@/lib/game/types";
 
 /** Clean a card array: hide stale flips (>5s old, not matched) */
@@ -25,9 +26,32 @@ function cleanStaleCards(cards: BoardCard[]): BoardCard[] {
 export function GameBoard() {
   const [cards, setCards] = useState<BoardCard[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showRoundComplete, setShowRoundComplete] = useState(false);
   const { user } = useAuth();
   const flippingRef = useRef(false);
   const flipQueueRef = useRef<number[]>([]);
+
+  // Detect when all cards are matched
+  const allMatched = useMemo(() => {
+    return cards.length === TOTAL_CARDS && cards.every((c) => c.is_matched);
+  }, [cards]);
+
+  // Show overlay when all matched
+  useEffect(() => {
+    if (allMatched) {
+      setShowRoundComplete(true);
+    }
+  }, [allMatched]);
+
+  // Count how many unique pokemon the current user matched
+  const myMatchCount = useMemo(() => {
+    if (!user) return 0;
+    const matched = cards.filter((c) => c.is_matched && c.owner_id === user.id && c.pokemon);
+    // Each pair shows up on 2 cards, so unique pokemon = matched cards / 2
+    // But if server only marks owner on one card, count all
+    const uniquePokemon = new Set(matched.map((c) => c.pokemon!.pokemonId));
+    return uniquePokemon.size;
+  }, [cards, user]);
 
   // Fetch board state from server
   const fetchBoard = useCallback(async () => {
@@ -57,6 +81,17 @@ export function GameBoard() {
     }, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // Handle new round: init new game, refetch board, hide overlay
+  const handleNewRound = useCallback(async () => {
+    try {
+      await fetch("/api/game/init", { method: "POST" });
+      await fetchBoard();
+    } catch {
+      // ignore errors, will retry on next poll
+    }
+    setShowRoundComplete(false);
+  }, [fetchBoard]);
 
   // Process a single flip request
   const processFlip = useCallback(
@@ -142,7 +177,7 @@ export function GameBoard() {
         {Array.from({ length: TOTAL_CARDS }).map((_, i) => (
           <div
             key={i}
-            className="aspect-square rounded-xl min-w-[60px] bg-purple-200/50 animate-pulse"
+            className="aspect-square rounded-xl min-w-[60px] bg-white/[0.05] animate-pulse"
           />
         ))}
       </div>
@@ -151,10 +186,10 @@ export function GameBoard() {
 
   if (cards.length === 0) {
     return (
-      <div className="text-center py-12 text-muted-foreground">
+      <div className="text-center py-12 text-purple-300">
         <p>No game board found.</p>
         <button
-          className="mt-2 text-purple-600 underline"
+          className="mt-2 text-purple-400 hover:text-purple-200 underline transition-colors"
           onClick={() => fetch("/api/game/init", { method: "POST" }).then(fetchBoard)}
         >
           Initialize a new game
@@ -164,16 +199,22 @@ export function GameBoard() {
   }
 
   return (
-    <div className="grid grid-cols-6 gap-1.5 sm:gap-2 w-full max-w-[500px] mx-auto">
-      {cards.map((card) => (
-        <GameCard
-          key={card.index}
-          index={card.index}
-          card={card}
-          onFlip={handleFlip}
-          currentUserId={user?.id ?? null}
-        />
-      ))}
-    </div>
+    <>
+      <div className="grid grid-cols-6 gap-1.5 sm:gap-2 w-full max-w-[500px] mx-auto">
+        {cards.map((card) => (
+          <GameCard
+            key={card.index}
+            index={card.index}
+            card={card}
+            onFlip={handleFlip}
+            currentUserId={user?.id ?? null}
+          />
+        ))}
+      </div>
+
+      {showRoundComplete && (
+        <RoundComplete matchCount={myMatchCount} onNewRound={handleNewRound} />
+      )}
+    </>
   );
 }

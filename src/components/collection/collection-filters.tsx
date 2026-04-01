@@ -76,7 +76,9 @@ export function CollectionFilters() {
             variant={activeFilter === key ? "default" : "outline"}
             size="sm"
             className={cn(
-              activeFilter === key && "bg-purple-600 hover:bg-purple-700 text-white"
+              activeFilter === key
+                ? "bg-purple-600 hover:bg-purple-700 text-white"
+                : "bg-white/[0.07] border-white/10 text-purple-200 hover:bg-white/[0.12] hover:text-white"
             )}
             onClick={() =>
               updateParams({
