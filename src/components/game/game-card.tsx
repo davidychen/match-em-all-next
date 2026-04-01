@@ -12,6 +12,7 @@ interface GameCardProps {
   card: BoardCard | null;
   onFlip: (index: number) => void;
   currentUserId: string | null;
+  isPending?: boolean;
 }
 
 function PokeBall() {
@@ -37,12 +38,15 @@ function PokeBall() {
   );
 }
 
-export function GameCard({ index, card, onFlip, currentUserId }: GameCardProps) {
+export function GameCard({ index, card, onFlip, currentUserId, isPending }: GameCardProps) {
   const isRevealed = card?.pokemon != null;
   const isMatched = card?.is_matched === true;
   const isOwnedByMe = card?.owner_id === currentUserId;
-  const canClick = !isRevealed && !isMatched;
+  const canClick = !isRevealed && !isMatched && !isPending;
   const [gifFailed, setGifFailed] = useState(false);
+
+  // Flip the card if we have pokemon data OR if it's pending (waiting for server)
+  const showFlipped = isRevealed || isPending;
 
   const handleClick = () => {
     if (!canClick) return;
@@ -69,7 +73,7 @@ export function GameCard({ index, card, onFlip, currentUserId }: GameCardProps) 
         className="relative w-full h-full"
         style={{ transformStyle: "preserve-3d" }}
         initial={false}
-        animate={{ rotateY: isRevealed ? 180 : 0 }}
+        animate={{ rotateY: showFlipped ? 180 : 0 }}
         transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
       >
         {/* ===== BACK FACE — Pokeball ===== */}
@@ -108,16 +112,40 @@ export function GameCard({ index, card, onFlip, currentUserId }: GameCardProps) 
           className={cn(
             "absolute inset-0 rounded-xl shadow-md flex items-center justify-center p-1.5",
             "bg-[#1a0a2e] border-2",
+            isPending && !isRevealed && "border-purple-400/50 shadow-purple-400/20 shadow-md",
             isMatched && isOwnedByMe && "border-green-400 shadow-green-400/50 shadow-lg",
             isMatched && !isOwnedByMe && "border-gray-500/50 shadow-gray-500/20 shadow-md",
-            !isMatched && isOwnedByMe && "border-purple-500 shadow-purple-400/30 shadow-md",
-            !isMatched && !isOwnedByMe && "border-amber-400 shadow-amber-300/30 shadow-md"
+            !isMatched && !isPending && isOwnedByMe && "border-purple-500 shadow-purple-400/30 shadow-md",
+            !isMatched && !isPending && !isOwnedByMe && "border-amber-400 shadow-amber-300/30 shadow-md"
           )}
           style={{
             backfaceVisibility: "hidden",
             transform: "rotateY(180deg)",
           }}
         >
+          {/* Loading shimmer while waiting for server */}
+          {isPending && !isRevealed && (
+            <div className="absolute inset-0 rounded-lg overflow-hidden bg-purple-900/60">
+              {/* Pulsing question mark */}
+              <motion.div
+                className="absolute inset-0 flex items-center justify-center text-2xl sm:text-3xl font-bold text-purple-300/80"
+                animate={{ opacity: [0.4, 1, 0.4], scale: [0.9, 1.05, 0.9] }}
+                transition={{ duration: 1, repeat: Infinity, ease: "easeInOut" }}
+              >
+                ?
+              </motion.div>
+              {/* Sweeping shine */}
+              <motion.div
+                className="absolute inset-0"
+                style={{
+                  background: "linear-gradient(105deg, transparent 30%, rgba(168, 130, 255, 0.35) 45%, rgba(255, 255, 255, 0.18) 50%, rgba(168, 130, 255, 0.35) 55%, transparent 70%)",
+                }}
+                animate={{ x: ["-100%", "200%"] }}
+                transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+              />
+            </div>
+          )}
+
           {card?.pokemon && (
             <>
               {/* eslint-disable-next-line @next/next/no-img-element */}

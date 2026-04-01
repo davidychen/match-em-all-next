@@ -2,31 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { TOTAL_CARDS, FLIP_TIMEOUT_MS } from "@/lib/game/constants";
+import { useBoard } from "@/hooks/use-board";
+import { TOTAL_CARDS } from "@/lib/game/constants";
 import { GameCard } from "./game-card";
 import { RoundComplete } from "./round-complete";
-import type { BoardCard, PokemonInfo } from "@/lib/game/types";
-
-/** Clean a card array: hide stale flips (>5s old, not matched) */
-function cleanStaleCards(cards: BoardCard[]): BoardCard[] {
-  const now = Date.now();
-  return cards.map((card) => {
-    if (
-      card.pokemon &&
-      !card.is_matched &&
-      card.flipped_at &&
-      now - new Date(card.flipped_at).getTime() > FLIP_TIMEOUT_MS
-    ) {
-      return { ...card, pokemon: null, owner_id: null, owner_name: null, flipped_at: null };
-    }
-    return card;
-  });
-}
 
 export function GameBoard() {
-  const [cards, setCards] = useState<BoardCard[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { cards, loading, refetch, setCards } = useBoard();
   const [showRoundComplete, setShowRoundComplete] = useState(false);
+  const [pendingFlips, setPendingFlips] = useState<Set<number>>(new Set());
   const { user } = useAuth();
   const flippingRef = useRef(false);
   const flipQueueRef = useRef<number[]>([]);
@@ -47,90 +31,62 @@ export function GameBoard() {
   const myMatchCount = useMemo(() => {
     if (!user) return 0;
     const matched = cards.filter((c) => c.is_matched && c.owner_id === user.id && c.pokemon);
-    // Each pair shows up on 2 cards, so unique pokemon = matched cards / 2
-    // But if server only marks owner on one card, count all
     const uniquePokemon = new Set(matched.map((c) => c.pokemon!.pokemonId));
     return uniquePokemon.size;
   }, [cards, user]);
-
-  // Fetch board state from server
-  const fetchBoard = useCallback(async () => {
-    try {
-      const res = await fetch("/api/game/state");
-      const { cards: data } = await res.json();
-      if (data) {
-        setCards(cleanStaleCards(data));
-      }
-    } catch {
-      // ignore fetch errors
-    }
-    setLoading(false);
-  }, []);
-
-  // Initial load + poll every 2s for multiplayer sync
-  useEffect(() => {
-    fetchBoard();
-    const interval = setInterval(fetchBoard, 2000);
-    return () => clearInterval(interval);
-  }, [fetchBoard]);
-
-  // Client-side stale cleanup every second (between polls)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCards((prev) => cleanStaleCards(prev));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Handle new round: init new game, refetch board, hide overlay
   const handleNewRound = useCallback(async () => {
     try {
       await fetch("/api/game/init", { method: "POST" });
-      await fetchBoard();
+      await refetch();
     } catch {
-      // ignore errors, will retry on next poll
+      // ignore errors, realtime will sync
     }
     setShowRoundComplete(false);
-  }, [fetchBoard]);
+  }, [refetch]);
 
   // Process a single flip request
   const processFlip = useCallback(
     async (index: number) => {
       if (!user) return;
 
-      const res = await fetch("/api/game/flip", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ index }),
-      });
-      const data = await res.json();
+      try {
+        const res = await fetch("/api/game/flip", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ index }),
+        });
+        const data = await res.json();
 
-      if (data.pokemon) {
-        // Optimistically update this card in state
-        setCards((prev) =>
-          prev.map((c) =>
-            c.index === index
-              ? {
-                  ...c,
-                  pokemon: data.pokemon,
-                  owner_id: user.id,
-                  owner_name: user.user_metadata?.username ?? "Player",
-                  is_matched: data.status === "matched",
-                  flipped_at: new Date().toISOString(),
-                  matched_at: data.status === "matched" ? new Date().toISOString() : null,
-                }
-              : c
-          )
-        );
-
-        // If matched, also mark the other card as matched
-        if (data.status === "matched") {
-          // Refetch to get the full matched state from server
-          setTimeout(fetchBoard, 500);
+        if (data.pokemon) {
+          // Fill in the pokemon data — card is already visually flipped from pending state
+          setCards((prev) =>
+            prev.map((c) =>
+              c.index === index
+                ? {
+                    ...c,
+                    pokemon: data.pokemon,
+                    owner_id: user.id,
+                    owner_name: user.user_metadata?.username ?? "Player",
+                    is_matched: data.status === "matched",
+                    flipped_at: new Date().toISOString(),
+                    matched_at: data.status === "matched" ? new Date().toISOString() : null,
+                  }
+                : c
+            )
+          );
         }
+      } finally {
+        // Clear pending state whether success or error
+        setPendingFlips((prev) => {
+          const next = new Set(prev);
+          next.delete(index);
+          return next;
+        });
       }
     },
-    [user, fetchBoard]
+    [user, setCards]
   );
 
   // Process queued flips one at a time
@@ -165,10 +121,13 @@ export function GameBoard() {
         );
       }
 
+      // Immediately mark card as pending — starts flip animation before server responds
+      setPendingFlips((prev) => new Set(prev).add(index));
+
       flipQueueRef.current.push(index);
       processQueue();
     },
-    [user, cards, processQueue]
+    [user, cards, processQueue, setCards]
   );
 
   if (loading) {
@@ -190,7 +149,7 @@ export function GameBoard() {
         <p>No game board found.</p>
         <button
           className="mt-2 text-purple-400 hover:text-purple-200 underline transition-colors"
-          onClick={() => fetch("/api/game/init", { method: "POST" }).then(fetchBoard)}
+          onClick={() => fetch("/api/game/init", { method: "POST" }).then(refetch)}
         >
           Initialize a new game
         </button>
@@ -208,6 +167,7 @@ export function GameBoard() {
             card={card}
             onFlip={handleFlip}
             currentUserId={user?.id ?? null}
+            isPending={pendingFlips.has(card.index)}
           />
         ))}
       </div>

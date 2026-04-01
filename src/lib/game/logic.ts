@@ -1,6 +1,6 @@
 import { SupabaseClient } from "@supabase/supabase-js";
 import { TOTAL_CARDS, PAIRS_COUNT, FLIP_TIMEOUT_MS } from "./constants";
-import { fetchRandomPokemon, fetchPokemonInfo } from "./pokemon-fetcher";
+import { fetchRandomPokemon } from "./pokemon-fetcher";
 import type { PokemonInfo, FlipResult } from "./types";
 
 function shuffle<T>(array: T[]): T[] {
@@ -67,6 +67,46 @@ export async function cleanupStaleFlips(supabase: SupabaseClient): Promise<void>
     .lt("flipped_at", cutoff);
 }
 
+/* ─── Throttled cleanup: at most once per 10 seconds ─── */
+let lastCleanupTime = 0;
+const CLEANUP_THROTTLE_MS = 10_000;
+
+async function maybeCleanupStaleFlips(supabase: SupabaseClient): Promise<void> {
+  const now = Date.now();
+  if (now - lastCleanupTime > CLEANUP_THROTTLE_MS) {
+    lastCleanupTime = now;
+    await cleanupStaleFlips(supabase);
+  }
+}
+
+/* ─── Helper: upsert match player score ─── */
+async function upsertMatchPlayer(
+  supabase: SupabaseClient,
+  userId: string,
+  pokemonName: string,
+  now: string
+): Promise<void> {
+  const { data: player } = await supabase
+    .from("match_players")
+    .select("count")
+    .eq("owner_id", userId)
+    .single();
+
+  if (player) {
+    await supabase
+      .from("match_players")
+      .update({ count: player.count + 1, last_pokemon_name: pokemonName, matched_at: now })
+      .eq("owner_id", userId);
+  } else {
+    await supabase.from("match_players").insert({
+      owner_id: userId,
+      count: 1,
+      last_pokemon_name: pokemonName,
+      matched_at: now,
+    });
+  }
+}
+
 export async function flipCard(
   supabase: SupabaseClient,
   userId: string,
@@ -77,28 +117,25 @@ export async function flipCard(
     return { status: "error", message: "Invalid card index" };
   }
 
-  // Cleanup stale flips (older than 5s)
-  await cleanupStaleFlips(supabase);
+  // Throttled cleanup — at most once per 10s instead of every flip
+  await maybeCleanupStaleFlips(supabase);
 
-  // Check card is available
-  const { data: card } = await supabase
-    .from("board_cards")
-    .select("*")
-    .eq("index", index)
-    .single();
+  // ── Parallel batch: fetch card, user's existing flips, and pokemon map ──
+  const [cardResult, existingFlipsResult, stateResult] = await Promise.all([
+    supabase.from("board_cards").select("*").eq("index", index).single(),
+    supabase.from("board_cards").select("*").eq("owner_id", userId).eq("is_matched", false),
+    supabase.from("board_state").select("pokemon_map").eq("id", 1).single(),
+  ]);
 
+  const card = cardResult.data;
   if (!card) return { status: "error", message: "Card not found" };
   if (card.is_matched) return { status: "error", message: "Card already matched" };
   if (card.owner_id) return { status: "error", message: "Card already flipped" };
 
-  // Check how many unmatched cards this user already has flipped
-  const { data: existingFlips } = await supabase
-    .from("board_cards")
-    .select("*")
-    .eq("owner_id", userId)
-    .eq("is_matched", false);
+  const state = stateResult.data;
+  if (!state) return { status: "error", message: "Board not initialized" };
 
-  const myFlippedCards = existingFlips ?? [];
+  const myFlippedCards = existingFlipsResult.data ?? [];
 
   // If user already has 2+ unmatched cards, flip them ALL back first
   if (myFlippedCards.length >= 2) {
@@ -109,15 +146,6 @@ export async function flipCard(
       .in("index", indices)
       .eq("is_matched", false);
   }
-
-  // Get secret pokemon mapping
-  const { data: state } = await supabase
-    .from("board_state")
-    .select("pokemon_map")
-    .eq("id", 1)
-    .single();
-
-  if (!state) return { status: "error", message: "Board not initialized" };
 
   const pokemonMap: PokemonInfo[] = state.pokemon_map;
   const pokemon = pokemonMap[index];
@@ -137,58 +165,35 @@ export async function flipCard(
 
   if (claimError) return { status: "error", message: "Failed to claim card" };
 
-  // Re-check: how many unmatched cards does this user now have? (should be 1 or 2)
-  const { data: myCards } = await supabase
-    .from("board_cards")
-    .select("*")
-    .eq("owner_id", userId)
-    .eq("is_matched", false);
+  // ── Compute match state from known data (no re-SELECT needed) ──
+  // If we cleared 2+ cards above, we only have the newly claimed card
+  // If we had 1 card before, we now have 2 → check match
+  // If we had 0, we only have the newly claimed card
+  const previousFlips = myFlippedCards.length >= 2 ? [] : myFlippedCards;
+  const otherCards = previousFlips.filter((c) => c.index !== index);
 
-  const otherCards = (myCards ?? []).filter((c) => c.index !== index);
-
-  // Only 1 card flipped (the one we just claimed) — wait for 2nd
   if (otherCards.length === 0) {
     return { status: "waiting", pokemon };
   }
 
-  // 2 cards flipped — check for match
   if (otherCards.length === 1) {
     const otherCard = otherCards[0];
     const otherPokemon: PokemonInfo | null = otherCard.pokemon;
 
     if (otherPokemon && otherPokemon.pokemonId === pokemon.pokemonId) {
-      // MATCH!
+      // MATCH! — parallel: mark matched + add to collection + update score
       const now = new Date().toISOString();
-      await supabase
-        .from("board_cards")
-        .update({ is_matched: true, matched_at: now })
-        .in("index", [index, otherCard.index]);
 
-      // Add to collection
-      await addToCollection(supabase, userId, pokemon);
+      await Promise.all([
+        supabase
+          .from("board_cards")
+          .update({ is_matched: true, matched_at: now })
+          .in("index", [index, otherCard.index]),
+        addToCollection(supabase, userId, pokemon),
+        upsertMatchPlayer(supabase, userId, pokemon.nameEn, now),
+      ]);
 
-      // Update match player score
-      const { data: player } = await supabase
-        .from("match_players")
-        .select("count")
-        .eq("owner_id", userId)
-        .single();
-
-      if (player) {
-        await supabase
-          .from("match_players")
-          .update({ count: player.count + 1, last_pokemon_name: pokemon.nameEn, matched_at: now })
-          .eq("owner_id", userId);
-      } else {
-        await supabase.from("match_players").insert({
-          owner_id: userId,
-          count: 1,
-          last_pokemon_name: pokemon.nameEn,
-          matched_at: now,
-        });
-      }
-
-      // Check if all cards matched → reset board
+      // Check if all cards matched → reset board (must be after the update commits)
       const { count } = await supabase
         .from("board_cards")
         .select("*", { count: "exact", head: true })
@@ -200,12 +205,10 @@ export async function flipCard(
 
       return { status: "matched", pokemon, matchedPokemon: pokemon };
     } else {
-      // No match — both cards stay visible for 5s, then auto-clear
       return { status: "no_match", pokemon };
     }
   }
 
-  // Shouldn't happen (we cleared extras above), but just in case
   return { status: "waiting", pokemon };
 }
 

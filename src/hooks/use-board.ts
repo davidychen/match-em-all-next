@@ -1,12 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 import type { BoardCard } from "@/lib/game/types";
 import { FLIP_TIMEOUT_MS } from "@/lib/game/constants";
 
 export function useBoard() {
   const [cards, setCards] = useState<BoardCard[]>([]);
   const [loading, setLoading] = useState(true);
+  const supabaseRef = useRef(createClient());
+  const channelStatusRef = useRef<string>("INITIAL");
 
   const fetchCards = useCallback(async () => {
     const res = await fetch("/api/game/state");
@@ -17,7 +20,7 @@ export function useBoard() {
     setLoading(false);
   }, []);
 
-  // Update a single card in state (optimistic)
+  // Update a single card in state (optimistic or realtime patch)
   const updateCard = useCallback((index: number, patch: Partial<BoardCard>) => {
     setCards(prev => {
       const next = [...prev];
@@ -30,10 +33,36 @@ export function useBoard() {
   }, []);
 
   useEffect(() => {
+    const supabase = supabaseRef.current;
+
+    // Initial fetch
     fetchCards();
 
-    // Auto-flip-back: every second, clear cards that are flipped > 5s ago
-    const interval = setInterval(() => {
+    // ── Realtime subscription on board_cards ──
+    const channel = supabase
+      .channel("board-cards-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "board_cards" },
+        (payload) => {
+          const updated = payload.new as BoardCard;
+          if (updated && typeof updated.index === "number") {
+            setCards(prev =>
+              prev.map(c => c.index === updated.index ? { ...c, ...updated } : c)
+            );
+          }
+        }
+      )
+      .subscribe((status) => {
+        channelStatusRef.current = status;
+        // On reconnect, sync any missed changes
+        if (status === "SUBSCRIBED") {
+          fetchCards();
+        }
+      });
+
+    // ── Client-side stale flip cleanup (every 1s) ──
+    const cleanupInterval = setInterval(() => {
       const now = Date.now();
       setCards(prev => prev.map(card => {
         if (
@@ -47,14 +76,19 @@ export function useBoard() {
       }));
     }, 1000);
 
-    // Sync with server every 10 seconds (gentle poll for other players' updates)
-    const syncInterval = setInterval(fetchCards, 10000);
+    // ── Fallback poll (12s) — only fires when realtime is disconnected ──
+    const fallbackInterval = setInterval(() => {
+      if (channelStatusRef.current !== "SUBSCRIBED") {
+        fetchCards();
+      }
+    }, 12000);
 
     return () => {
-      clearInterval(interval);
-      clearInterval(syncInterval);
+      supabase.removeChannel(channel);
+      clearInterval(cleanupInterval);
+      clearInterval(fallbackInterval);
     };
   }, [fetchCards]);
 
-  return { cards, loading, refetch: fetchCards, updateCard };
+  return { cards, loading, refetch: fetchCards, updateCard, setCards };
 }
