@@ -3,76 +3,68 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
-import { createClient } from "@/lib/supabase/client";
 import { getSpriteUrl } from "@/lib/game/constants";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 
 interface CaughtPokemon {
   pokemon_id: number;
   name: string;
+  name_en: string;
 }
 
 export default function ProfilePage() {
   const { user, profile, loading } = useAuth();
   const [caughtPokemon, setCaughtPokemon] = useState<CaughtPokemon[]>([]);
   const [updating, setUpdating] = useState(false);
-  const supabase = useRef(createClient()).current;
 
   useEffect(() => {
     if (!user) return;
 
-    async function fetchCaught() {
-      const { data } = await supabase
-        .from("collections")
-        .select("pokemon_id, name")
-        .eq("owner_id", user!.id);
-
-      if (data) {
-        const unique = Array.from(
-          new Map(
-            (data as CaughtPokemon[]).map((p) => [p.pokemon_id, p])
-          ).values()
-        );
-        setCaughtPokemon(unique.sort((a, b) => a.pokemon_id - b.pokemon_id));
-      }
-    }
-
-    fetchCaught();
-  }, [user, supabase]);
-
-  const handleAvatarChange = useCallback(async (pokemonId: string | null) => {
-    if (!pokemonId) return;
-    setUpdating(true);
-    try {
-      const res = await fetch("/api/avatar", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ avatar_id: parseInt(pokemonId, 10) }),
+    fetch("/api/collection?limit=200")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.items) {
+          setCaughtPokemon(
+            data.items
+              .map((p: CaughtPokemon) => ({
+                pokemon_id: p.pokemon_id,
+                name: p.name,
+                name_en: p.name_en,
+              }))
+              .sort((a: CaughtPokemon, b: CaughtPokemon) => a.pokemon_id - b.pokemon_id)
+          );
+        }
       });
+  }, [user]);
 
-      if (!res.ok) {
-        const data = await res.json();
-        toast.error(data.error ?? "Failed to update avatar");
-        return;
+  const handleAvatarChange = useCallback(
+    async (pokemonId: number) => {
+      setUpdating(true);
+      try {
+        const res = await fetch("/api/avatar", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pokemonId }),
+        });
+
+        if (!res.ok) {
+          const data = await res.json();
+          toast.error(data.error ?? "Failed to update avatar");
+          return;
+        }
+
+        toast.success("Avatar updated!");
+        window.location.reload();
+      } catch {
+        toast.error("Failed to update avatar");
+      } finally {
+        setUpdating(false);
       }
-
-      toast.success("Avatar updated!");
-      window.location.reload();
-    } catch {
-      toast.error("Failed to update avatar");
-    } finally {
-      setUpdating(false);
-    }
-  }, []);
+    },
+    []
+  );
 
   if (loading) {
     return (
@@ -84,9 +76,7 @@ export default function ProfilePage() {
 
   if (!profile) return null;
 
-  const avatarUrl = profile.avatar_id
-    ? getSpriteUrl(profile.avatar_id)
-    : null;
+  const avatarUrl = profile.avatar_id ? getSpriteUrl(profile.avatar_id) : null;
 
   return (
     <div className="max-w-md mx-auto flex flex-col gap-6">
@@ -96,7 +86,11 @@ export default function ProfilePage() {
         <CardHeader className="items-center">
           <Avatar className="w-24 h-24 border-4 border-purple-300">
             {avatarUrl && (
-              <AvatarImage src={avatarUrl} alt={profile.username} />
+              <AvatarImage
+                src={avatarUrl}
+                alt={profile.username}
+                style={{ imageRendering: "pixelated" }}
+              />
             )}
             <AvatarFallback className="bg-purple-200 text-purple-700 text-2xl font-bold">
               {profile.username.slice(0, 2).toUpperCase()}
@@ -112,26 +106,39 @@ export default function ProfilePage() {
                 Catch some Pokemon to use them as your avatar!
               </p>
             ) : (
-              <Select
-                value={profile.avatar_id?.toString() ?? ""}
-                onValueChange={handleAvatarChange}
-                disabled={updating}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose a Pokemon avatar" />
-                </SelectTrigger>
-                <SelectContent>
-                  {caughtPokemon.map((p) => (
-                    <SelectItem
-                      key={p.pokemon_id}
-                      value={p.pokemon_id.toString()}
-                      className="capitalize"
-                    >
-                      #{p.pokemon_id} {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="grid grid-cols-6 gap-2">
+                {caughtPokemon.map((p) => (
+                  <button
+                    key={p.pokemon_id}
+                    disabled={updating}
+                    onClick={() => handleAvatarChange(p.pokemon_id)}
+                    className={`
+                      relative aspect-square rounded-lg border-2 p-1
+                      transition-all hover:scale-110 hover:shadow-md
+                      disabled:opacity-50 disabled:cursor-not-allowed
+                      ${
+                        profile.avatar_id === p.pokemon_id
+                          ? "border-purple-500 bg-purple-50 shadow-purple-200 shadow-md"
+                          : "border-gray-200 hover:border-purple-300 bg-white"
+                      }
+                    `}
+                    title={p.name_en || p.name}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={getSpriteUrl(p.pokemon_id)}
+                      alt={p.name_en || p.name}
+                      className="w-full h-full object-contain"
+                      style={{ imageRendering: "pixelated" }}
+                    />
+                    {profile.avatar_id === p.pokemon_id && (
+                      <div className="absolute -top-1 -right-1 w-4 h-4 bg-purple-500 rounded-full flex items-center justify-center">
+                        <span className="text-white text-[10px]">✓</span>
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
             )}
           </div>
         </CardContent>
