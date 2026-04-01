@@ -25,11 +25,11 @@ const pokemonColors = [
 ];
 
 const sortOptions = [
-  { value: "id", label: "ID" },
-  { value: "name", label: "Name" },
-  { value: "rarity", label: "Rarity" },
-  { value: "first_caught", label: "First Caught" },
-  { value: "last_caught", label: "Last Caught" },
+  { value: "pokemon_id", label: "ID" },
+  { value: "name_en", label: "Name" },
+  { value: "rate", label: "Rarity" },
+  { value: "first_at", label: "First Caught" },
+  { value: "last_at", label: "Last Caught" },
   { value: "count", label: "Count" },
 ];
 
@@ -39,10 +39,10 @@ export function CollectionFilters() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const activeFilter = (searchParams.get("filter") ?? "all") as FilterCategory;
-  const filterValue = searchParams.get("filterValue") ?? "";
-  const sortBy = searchParams.get("sort") ?? "id";
-  const sortDir = searchParams.get("dir") ?? "asc";
+  const activeFilter = (searchParams.get("filterBy") ?? "all") as FilterCategory;
+  const filterValue = searchParams.get("filterKey") ?? "";
+  const sortBy = searchParams.get("sortBy") ?? "pokemon_id";
+  const sortDir = searchParams.get("order") ?? "asc";
 
   const updateParams = useCallback(
     (updates: Record<string, string | null>) => {
@@ -54,7 +54,6 @@ export function CollectionFilters() {
           params.set(key, value);
         }
       }
-      params.delete("cursor");
       router.push(`/collection?${params.toString()}`);
     },
     [router, searchParams]
@@ -77,13 +76,12 @@ export function CollectionFilters() {
             variant={activeFilter === key ? "default" : "outline"}
             size="sm"
             className={cn(
-              activeFilter === key &&
-                "bg-purple-600 hover:bg-purple-700 text-white"
+              activeFilter === key && "bg-purple-600 hover:bg-purple-700 text-white"
             )}
             onClick={() =>
               updateParams({
-                filter: key === "all" ? null : key,
-                filterValue: null,
+                filterBy: key === "all" ? null : key,
+                filterKey: null,
               })
             }
           >
@@ -94,8 +92,8 @@ export function CollectionFilters() {
 
       {activeFilter === "type" && (
         <Select
-          value={filterValue}
-          onValueChange={(val) => updateParams({ filterValue: val })}
+          value={filterValue || undefined}
+          onValueChange={(val) => updateParams({ filterKey: val })}
         >
           <SelectTrigger className="w-32 h-8">
             <SelectValue placeholder="Select type" />
@@ -112,8 +110,8 @@ export function CollectionFilters() {
 
       {activeFilter === "color" && (
         <Select
-          value={filterValue}
-          onValueChange={(val) => updateParams({ filterValue: val })}
+          value={filterValue || undefined}
+          onValueChange={(val) => updateParams({ filterKey: val })}
         >
           <SelectTrigger className="w-32 h-8">
             <SelectValue placeholder="Select color" />
@@ -131,9 +129,9 @@ export function CollectionFilters() {
       <div className="ml-auto flex items-center gap-1.5">
         <Select
           value={sortBy}
-          onValueChange={(val) => updateParams({ sort: val })}
+          onValueChange={(val) => updateParams({ sortBy: val })}
         >
-          <SelectTrigger className="w-32 h-8">
+          <SelectTrigger className="w-36 h-8">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -146,10 +144,9 @@ export function CollectionFilters() {
         </Select>
         <Button
           variant="outline"
-          size="icon-sm"
-          onClick={() =>
-            updateParams({ dir: sortDir === "asc" ? "desc" : "asc" })
-          }
+          size="sm"
+          className="h-8 w-8 p-0"
+          onClick={() => updateParams({ order: sortDir === "asc" ? "desc" : "asc" })}
         >
           <ArrowUpDown
             className={cn(

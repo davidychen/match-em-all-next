@@ -9,10 +9,7 @@ import { getSpriteUrl } from "@/lib/game/constants";
 import { PokemonDetailDialog } from "./pokemon-detail-dialog";
 import type { CollectionItem } from "@/lib/game/types";
 
-interface CollectionPage {
-  data: CollectionItem[];
-  nextCursor: string | null;
-}
+const PAGE_SIZE = 18;
 
 const typeColors: Record<string, string> = {
   normal: "bg-gray-400",
@@ -35,13 +32,20 @@ const typeColors: Record<string, string> = {
   fairy: "bg-pink-300",
 };
 
+interface ApiResponse {
+  items: CollectionItem[];
+  total: number;
+}
+
 export function CollectionGrid() {
   const searchParams = useSearchParams();
   const sentinelRef = useRef<HTMLDivElement>(null);
-  const [selectedPokemon, setSelectedPokemon] =
-    useState<CollectionItem | null>(null);
+  const [selectedPokemon, setSelectedPokemon] = useState<CollectionItem | null>(null);
 
-  const queryString = searchParams.toString();
+  const filterBy = searchParams.get("filterBy") ?? "all";
+  const filterKey = searchParams.get("filterKey") ?? "";
+  const sortBy = searchParams.get("sortBy") ?? "pokemon_id";
+  const order = searchParams.get("order") ?? "asc";
 
   const {
     data,
@@ -50,17 +54,27 @@ export function CollectionGrid() {
     isFetchingNextPage,
     isLoading,
     isError,
-  } = useInfiniteQuery<CollectionPage>({
-    queryKey: ["collection", queryString],
+  } = useInfiniteQuery<ApiResponse>({
+    queryKey: ["collection", filterBy, filterKey, sortBy, order],
     queryFn: async ({ pageParam }) => {
-      const params = new URLSearchParams(queryString);
-      if (pageParam) params.set("cursor", pageParam as string);
+      const offset = (pageParam as number) ?? 0;
+      const params = new URLSearchParams({
+        filterBy,
+        filterKey,
+        sortBy,
+        order,
+        limit: String(PAGE_SIZE),
+        offset: String(offset),
+      });
       const res = await fetch(`/api/collection?${params.toString()}`);
       if (!res.ok) throw new Error("Failed to fetch collection");
       return res.json();
     },
-    initialPageParam: null as string | null,
-    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((sum, p) => sum + p.items.length, 0);
+      return loaded < lastPage.total ? loaded : undefined;
+    },
   });
 
   const handleObserver = useCallback(
@@ -76,23 +90,18 @@ export function CollectionGrid() {
   useEffect(() => {
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
-    const observer = new IntersectionObserver(handleObserver, {
-      rootMargin: "200px",
-    });
+    const observer = new IntersectionObserver(handleObserver, { rootMargin: "200px" });
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [handleObserver]);
 
-  const allPokemon = data?.pages.flatMap((page) => page.data) ?? [];
+  const allPokemon = data?.pages.flatMap((page) => page.items) ?? [];
 
   if (isLoading) {
     return (
       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
-        {Array.from({ length: 18 }).map((_, i) => (
-          <div
-            key={i}
-            className="aspect-square rounded-xl bg-purple-100/50 animate-pulse"
-          />
+        {Array.from({ length: 12 }).map((_, i) => (
+          <div key={i} className="aspect-square rounded-xl bg-purple-100/50 animate-pulse" />
         ))}
       </div>
     );
@@ -109,10 +118,8 @@ export function CollectionGrid() {
   if (allPokemon.length === 0) {
     return (
       <div className="text-center py-16">
-        <div className="text-5xl mb-3">&#x1F4E6;</div>
-        <h3 className="text-lg font-semibold text-muted-foreground">
-          No Pokemon caught yet
-        </h3>
+        <div className="text-5xl mb-3">📦</div>
+        <h3 className="text-lg font-semibold text-muted-foreground">No Pokemon caught yet</h3>
         <p className="text-sm text-muted-foreground mt-1">
           Start matching cards on the Game Board to build your collection!
         </p>
@@ -122,6 +129,7 @@ export function CollectionGrid() {
 
   return (
     <>
+      <p className="text-sm text-muted-foreground">{data?.pages[0]?.total ?? 0} Pokemon collected</p>
       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
         {allPokemon.map((pokemon) => (
           <Card
@@ -135,12 +143,13 @@ export function CollectionGrid() {
                 src={getSpriteUrl(pokemon.pokemon_id)}
                 alt={pokemon.name}
                 className="w-16 h-16 object-contain group-hover:scale-110 transition-transform"
+                style={{ imageRendering: "pixelated" }}
               />
               <span className="text-xs font-medium capitalize truncate w-full text-center">
-                {pokemon.name}
+                {pokemon.name_en}
               </span>
               <div className="flex flex-wrap gap-0.5 justify-center">
-                {pokemon.type.map((t) => (
+                {(pokemon.type ?? []).map((t) => (
                   <Badge
                     key={t}
                     className={`${typeColors[t] ?? "bg-gray-400"} text-white text-[9px] px-1.5 py-0`}
@@ -159,9 +168,7 @@ export function CollectionGrid() {
 
       <div ref={sentinelRef} className="h-10" />
       {isFetchingNextPage && (
-        <div className="text-center py-4 text-sm text-muted-foreground">
-          Loading more...
-        </div>
+        <div className="text-center py-4 text-sm text-muted-foreground">Loading more...</div>
       )}
 
       <PokemonDetailDialog
